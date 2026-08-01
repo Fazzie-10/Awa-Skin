@@ -1,0 +1,40 @@
+name: Periodic Product Scrape
+
+on:
+  schedule:
+    - cron: '0 6 * * 1'   # Every Monday at 6 AM UTC
+  workflow_dispatch:        # Manual trigger
+
+jobs:
+  scrape-and-classify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run full scraping pipeline
+        run: python run_pipeline.py --run-prices --max-pages-per-shop 100 --max-products-per-shop 99999
+
+      - name: Compile data
+        run: python run_pipeline.py --compile-only
+
+      - name: Run agentic categorization
+        run: python run_pipeline.py --run-agentic
+        env:
+          GEMINI_API_KEYS: ${{ secrets.GEMINI_API_KEY_1 }},${{ secrets.GEMINI_API_KEY_2 }},${{ secrets.GEMINI_API_KEY_3 }}
+
+      - name: Commit updated data
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/
+          git diff --staged --quiet || git commit -m "chore: update scraped product data [$(date -u +%Y-%m-%d)]"
+          git push

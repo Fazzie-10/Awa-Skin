@@ -1,0 +1,27 @@
+# dependencies
+node_modules/
+__pycache__/
+*.pyc
+
+# Next.js
+awa-skin/.next/
+awa-skin/out/
+awa-skin/node_modules/
+awa-skin/cloudflared.exe
+
+# Large raw scraper dumps / binaries / temporary files
+*.exe
+*.log
+data/raw_*.jsonl
+data/*.xlsx
+
+# OS & Env
+.DS_Store
+.env
+.env.local
+.env*.local
+
+# Only README markdown pushed; all other .md files ignored
+*.md
+!README.md
+!**/README.md
