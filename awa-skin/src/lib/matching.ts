@@ -98,7 +98,7 @@ async function fetchNigerianPrices(): Promise<NigerianPrice[]> {
 
 export async function matchByConcerns(context: AnalysisContext): Promise<StructuredRoutine> {
   const { recommendedIngredients, ingredientsToAvoid, barrierCompromised, primaryConcerns, narrativeSummary, questionnaire } = context;
-  const userLocation = questionnaire?.location || "All";
+  const userLocation: string = questionnaire?.location || "All";
   const budgetTier = questionnaire?.budgetTier || "all";
 
   if (!recommendedIngredients.length) {

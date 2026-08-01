@@ -42,6 +42,8 @@ export interface QuestionnaireData {
   sensitivity: boolean | null;
   currentRoutine: string[];
   concerns: string[];
+  location?: "Lagos" | "Abuja" | "Other" | null;
+  budgetTier?: "budget" | "balanced" | "premium" | null;
 }
 
 const CONCERN_TO_INGREDIENTS: Record<string, string[]> = {

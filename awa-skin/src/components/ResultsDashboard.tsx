@@ -30,6 +30,8 @@ interface ProductMatch {
   nigerian_price_naira?: number;
   nigerian_source_shop?: string;
   nigerian_product_url?: string;
+  location?: "Lagos" | "Abuja" | "Unknown";
+  shipping_required?: boolean;
 }
 
 interface SkinAnalysisResult {
