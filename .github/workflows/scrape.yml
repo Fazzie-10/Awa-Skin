@@ -5,6 +5,9 @@ on:
     - cron: '0 6 * * 1'   # Every Monday at 6 AM UTC
   workflow_dispatch:        # Manual trigger
 
+permissions:
+  contents: write
+
 jobs:
   scrape-and-classify:
     runs-on: ubuntu-latest
