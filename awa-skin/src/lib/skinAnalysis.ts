@@ -146,17 +146,27 @@ function buildPrompt(scores: PerfectCorpScores | null, q: QuestionnaireData): st
 }
 
 const PC_SCORE_MAP: Record<string, keyof PerfectCorpScores> = {
-  hd_acne: "acne",
-  hd_pore: "pores",
-  hd_texture: "texture",
-  hd_redness: "redness",
-  hd_oiliness: "oiliness",
-  hd_radiance: "radiance",
-  hd_wrinkle: "wrinkles",
-  hd_dark_circle: "darkCircles",
-  hd_age_spot: "pigmentation",
+  acne: "acne",
+  pore: "pores",
+  texture: "texture",
+  redness: "redness",
+  oiliness: "oiliness",
+  radiance: "radiance",
+  wrinkle: "wrinkles",
+  dark_circle_v2: "darkCircles",
+  age_spot: "pigmentation",
 };
 const PC_ACTIONS = Object.keys(PC_SCORE_MAP);
+
+async function fetchWithBackoff(url: string, init: RequestInit, retries = 3): Promise<Response> {
+  let delay = 1000;
+  for (let attempt = 0; ; attempt++) {
+    const res = await fetch(url, init);
+    if (res.status !== 429 || attempt >= retries) return res;
+    await new Promise(r => setTimeout(r, delay));
+    delay *= 2;
+  }
+}
 
 export async function callPerfectCorp(base64Image: string): Promise<PerfectCorpScores | null> {
   const appKey = process.env.PERFECTCORP_APP_KEY;
@@ -168,14 +178,14 @@ export async function callPerfectCorp(base64Image: string): Promise<PerfectCorpS
   const base64Data = base64Image.includes(",") ? base64Image.split(",")[1] : base64Image;
   const binary = Buffer.from(base64Data, "base64");
   const controller = new AbortController();
-  const totalTimeout = setTimeout(() => controller.abort(), 35000);
+  const totalTimeout = setTimeout(() => controller.abort(), 120000);
 
   const authHeaders = { "Authorization": `Bearer ${appKey}` };
 
   try {
     // Step 1: Register file metadata
     console.log("[Perfect Corp] Step 1: Registering file metadata");
-    const fileRes = await fetch(`${PERFECT_CORP_BASE}/s2s/v2.0/file/skin-analysis`, {
+    const fileRes = await fetchWithBackoff(`${PERFECT_CORP_BASE}/s2s/v2.0/file/skin-analysis`, {
       method: "POST",
       signal: controller.signal,
       headers: { "Content-Type": "application/json", ...authHeaders },
@@ -228,7 +238,7 @@ export async function callPerfectCorp(base64Image: string): Promise<PerfectCorpS
 
     // Step 3: Start analysis task
     console.log("[Perfect Corp] Step 3: Starting analysis task");
-    const taskRes = await fetch(`${PERFECT_CORP_BASE}/s2s/v2.0/task/skin-analysis`, {
+    const taskRes = await fetchWithBackoff(`${PERFECT_CORP_BASE}/s2s/v2.0/task/skin-analysis`, {
       method: "POST",
       signal: controller.signal,
       headers: { "Content-Type": "application/json", ...authHeaders },
@@ -253,17 +263,18 @@ export async function callPerfectCorp(base64Image: string): Promise<PerfectCorpS
       return null;
     }
 
-    // Step 4: Poll for results (every 3s, up to 30s)
+    // Step 4: Poll for results (every 3s, up to 120s). Results are retained 24h.
     console.log("[Perfect Corp] Step 4: Polling for results");
     const pollStart = Date.now();
-    const POLL_MS = 30_000;
+    const POLL_MS = 120_000;
     let output: Record<string, any>[] | null = null;
+    let lastStatus: string | undefined;
 
     while (Date.now() - pollStart < POLL_MS) {
       await new Promise(r => setTimeout(r, 3000));
       if (controller.signal.aborted) break;
 
-      const pollRes = await fetch(
+      const pollRes = await fetchWithBackoff(
         `${PERFECT_CORP_BASE}/s2s/v2.0/task/skin-analysis/${taskId}`,
         { method: "GET", signal: controller.signal, headers: authHeaders },
       );
@@ -275,6 +286,7 @@ export async function callPerfectCorp(base64Image: string): Promise<PerfectCorpS
 
       const pollJson = await pollRes.json();
       const status = pollJson?.data?.task_status;
+      lastStatus = status;
 
       if (status === "success") {
         output = pollJson?.data?.results?.output ?? [];
@@ -293,7 +305,7 @@ export async function callPerfectCorp(base64Image: string): Promise<PerfectCorpS
     }
 
     if (!output) {
-      console.log("[Perfect Corp] Polling timed out or no result");
+      console.log(`[Perfect Corp] Polling timed out or no result (last status: ${lastStatus ?? "unknown"})`);
       return null;
     }
 

@@ -59,6 +59,13 @@ interface YouCamScores {
   fitzpatrickEstimate?: string | null;
 }
 
+function imageHash(images: string[]): string {
+  if (!images.length) return "";
+  return String(images.reduce((acc, img) => acc + img.length, 0)) + ":" + images[0].slice(0, 80);
+}
+
+const REUSE_KEY = "youcamReuse";
+
 interface SkinAnalysisResult {
   youcamScores: YouCamScores | null;
   geminiAnalysis: GeminiAnalysis | null;
@@ -241,6 +248,17 @@ export default function ResultsDashboard() {
 
           if (data.status === "completed") {
             sessionStorage.setItem("analysisResult", JSON.stringify(data.result));
+            if (data.result?.youcamScores && data.result?.youcamScores !== null && data.result.youcamScores.acne !== undefined) {
+              const payload = sessionStorage.getItem("retryPayload");
+              if (payload) {
+                try {
+                  const { images } = JSON.parse(payload);
+                  if (Array.isArray(images)) {
+                    sessionStorage.setItem(REUSE_KEY, JSON.stringify({ hash: imageHash(images), youcamScores: data.result.youcamScores }));
+                  }
+                } catch { /* ignore */ }
+              }
+            }
             if (!cancelled) { setResult(data.result); setLoading(false); setPolling(false); }
             return;
           }
@@ -284,10 +302,24 @@ export default function ResultsDashboard() {
     setPolling(true);
 
     try {
+      let body: string = payload;
+      const reuseRaw = sessionStorage.getItem(REUSE_KEY);
+      if (reuseRaw) {
+        try {
+          const reuse = JSON.parse(reuseRaw);
+          const { images } = JSON.parse(payload);
+          if (reuse.hash && reuse.youcamScores && Array.isArray(images) && reuse.hash === imageHash(images)) {
+            const parsed = JSON.parse(payload);
+            parsed.youcamScores = reuse.youcamScores;
+            body = JSON.stringify(parsed);
+          }
+        } catch { /* ignore */ }
+      }
+
       const res = await fetch("/api/analyze-skin", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: payload,
+        body,
       });
 
       if (!res.ok) throw new Error("Analysis failed");

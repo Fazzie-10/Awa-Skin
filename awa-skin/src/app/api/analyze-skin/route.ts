@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { callPerfectCorp, callGemini } from "@/lib/skinAnalysis";
+import type { QuestionnaireData, PerfectCorpScores } from "@/lib/skinAnalysis";
 import { categorizeScores, mergeContext } from "@/lib/youcam";
 import { matchByConcerns } from "@/lib/matching";
-import type { QuestionnaireData } from "@/lib/skinAnalysis";
 
 export const runtime = 'nodejs';
 
@@ -18,7 +18,6 @@ export async function POST(request: NextRequest) {
     const { images, questionnaire } = body;
 
     const imgArray: string[] = Array.isArray(images) ? images : (body.image ? [body.image] : []);
-
     if (!imgArray.length || !questionnaire) {
       return NextResponse.json(
         { error: "Missing required fields: images (array) and questionnaire" },
@@ -44,7 +43,8 @@ export async function POST(request: NextRequest) {
     console.log(`[Analyze-Skin] Job ${job.id} created, returning immediately`);
     const response = NextResponse.json({ jobId: job.id });
 
-    processAnalysisJob(job.id, imgArray, questionnaire as QuestionnaireData);
+    const youcamOverride: PerfectCorpScores | null = body.youcamScores ?? null;
+    processAnalysisJob(job.id, imgArray, questionnaire as QuestionnaireData, youcamOverride);
 
     return response;
   } catch (error) {
@@ -57,10 +57,15 @@ async function processAnalysisJob(
   jobId: string,
   images: string[],
   questionnaire: QuestionnaireData,
+  youcamOverride: PerfectCorpScores | null,
 ) {
   try {
     console.log(`[Job ${jobId}] Starting YouCam analysis...`);
-    const youcamScores = await callPerfectCorp(images[0] || "");
+    const hasYouCamKey = Boolean(process.env.PERFECTCORP_APP_KEY);
+    const youcamScores = youcamOverride || await callPerfectCorp(images[0] || "");
+    const youcamStatus = youcamOverride
+      ? "reused"
+      : (!hasYouCamKey ? "skipped" : (youcamScores ? "success" : "error"));
 
     console.log(`[Job ${jobId}] YouCam scores:`, youcamScores ? Object.entries(youcamScores).filter(([k]) => k !== 'rawResponse').map(([k, v]) => `${k}=${v}`).join(", ") : "null");
 
@@ -102,6 +107,7 @@ async function processAnalysisJob(
           status: "completed",
           result: {
             youcamScores,
+            youcam_status: youcamStatus,
             geminiAnalysis: null,
             routine,
             error: null,
@@ -145,6 +151,7 @@ async function processAnalysisJob(
         status: "completed",
         result: {
           youcamScores,
+          youcam_status: youcamStatus,
           geminiAnalysis: geminiResult,
           routine,
           error: null,
