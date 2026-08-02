@@ -41,8 +41,10 @@ import os
 import random
 import re
 import sys
+import threading
 import time
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import requests
 
@@ -62,6 +64,8 @@ INCIDECODER_MAX_PRODUCTS_PER_BRAND = 40
 INCIDECODER_DELAY = (0.75, 1.0)
 NAME_MATCH_THRESHOLD = 0.75
 MIGRATION_MISSING = {"flag": False}
+_PRINT_LOCK = threading.Lock()
+_STATS_LOCK = threading.Lock()
 
 _MIGRATION_MESSAGE = (
     "[Enrich] DATABASE ERROR: the nigerian_prices table is missing the "
@@ -93,7 +97,8 @@ def log_row(row, tier, status, detail=""):
     shop = row.get("source_shop") or "?"
     name = (row.get("product_name") or "")[:70]
     suffix = " | " + detail if detail else ""
-    print(f"[Enrich] {shop} | {name} | {tier} {status}{suffix}")
+    with _PRINT_LOCK:
+        print(f"[Enrich] {shop} | {name} | {tier} {status}{suffix}", flush=True)
 
 
 def _norm(s):
@@ -440,7 +445,28 @@ def scrape_teeka4_inci(url):
         return None
 
 
-def run_tier1(rows, args, base_url, key):
+def _enrich_teeka4_row(row, args, base_url, key):
+    inci = scrape_teeka4_inci(row["product_url"])
+    if not inci:
+        log_row(row, "teeka4", "FAIL", "no INCI found on product page")
+        return None
+    row["raw_ingredients"] = inci
+    if args.dry_run:
+        log_row(row, "teeka4", "OK (dry-run)", f"{len(inci)} ingredients")
+        return "enriched"
+    status, err = patch_row(base_url, key, row["id"], {"raw_ingredients": inci})
+    if status == "OK":
+        log_row(row, "teeka4", "OK", f"{len(inci)} ingredients")
+        return "enriched"
+    if status == "COLUMN_MISSING":
+        log_row(row, "teeka4", "FAIL", "raw_ingredients column missing")
+        print(_MIGRATION_MESSAGE)
+        return "column_missing"
+    log_row(row, "teeka4", "FAIL", err)
+    return None
+
+
+def run_tier1(rows, args, base_url, key, workers=5):
     candidates = [r for r in rows
                   if str(r.get("source_shop") or "").lower() == TEEKA4
                   and _is_face(r)
@@ -451,31 +477,21 @@ def run_tier1(rows, args, base_url, key):
     if not candidates:
         print("[Enrich] Tier 1 (teeka4): no candidate rows.")
         return 0
-    print(f"[Enrich] Tier 1 (teeka4): scraping INCI for {len(candidates)} rows")
+    print(f"[Enrich] Tier 1 (teeka4): scraping INCI for {len(candidates)} rows "
+          f"with {workers} worker(s)")
     enriched = 0
-    for row in candidates:
-        inci = scrape_teeka4_inci(row["product_url"])
-        if not inci:
-            log_row(row, "teeka4", "FAIL", "no INCI found on product page")
-            time.sleep(random.uniform(*PAGE_DELAY))
-            continue
-        row["raw_ingredients"] = inci
-        if args.dry_run:
-            enriched += 1
-            log_row(row, "teeka4", "OK (dry-run)", f"{len(inci)} ingredients")
-            time.sleep(random.uniform(*PAGE_DELAY))
-            continue
-        status, err = patch_row(base_url, key, row["id"], {"raw_ingredients": inci})
-        if status == "OK":
-            enriched += 1
-            log_row(row, "teeka4", "OK", f"{len(inci)} ingredients")
-        elif status == "COLUMN_MISSING":
-            log_row(row, "teeka4", "FAIL", "raw_ingredients column missing")
-            print(_MIGRATION_MESSAGE)
-            return enriched
-        else:
-            log_row(row, "teeka4", "FAIL", err)
-        time.sleep(random.uniform(*PAGE_DELAY))
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = [pool.submit(_enrich_teeka4_row, row, args, base_url, key)
+                   for row in candidates]
+        for fut in as_completed(futures):
+            result = fut.result()
+            if result == "enriched":
+                enriched += 1
+            elif result == "column_missing":
+                for f in futures:
+                    f.cancel()
+                return enriched
+            time.sleep(random.uniform(0.02, 0.08))
     print(f"[Enrich] Tier 1 (teeka4) done: {enriched} rows enriched")
     return enriched
 
@@ -581,7 +597,47 @@ class IncidecoderTier:
         return None
 
 
-def run_tier3(rows, args, base_url, key, inc_tier, stats):
+def _enrich_incidecoder_brand(brand, rows_for_brand, args, base_url, key, inc_tier, stats):
+    enriched = 0
+    try:
+        candidates_list = inc_tier.candidates_for(brand)
+    except Exception as e:
+        print(f"[Enrich] Tier 3 (incidecoder): candidates_for failed for {brand}: {e}", flush=True)
+        return 0
+    if not candidates_list:
+        print(f"[Enrich] Tier 3 (incidecoder): no INCIDecoder candidates for {brand}", flush=True)
+        return 0
+    print(f"[Enrich] Tier 3 (incidecoder): {len(candidates_list)} INCIDecoder candidates "
+          f"for {brand}", flush=True)
+    for row in rows_for_brand:
+        match = inc_tier.best_match(row.get("product_name"), candidates_list)
+        if not match:
+            with _STATS_LOCK:
+                stats["incidecoder_no_match"] += 1
+            log_row(row, "incidecoder", "FAIL", "no name match >= 0.75")
+            continue
+        inci = match["ingredients"]
+        row["raw_ingredients"] = inci
+        if args.dry_run:
+            enriched += 1
+            log_row(row, "incidecoder", "OK (dry-run)",
+                    f"matched '{match['name'][:40]}' ({len(inci)} ingredients)")
+            continue
+        status, err = patch_row(base_url, key, row["id"], {"raw_ingredients": inci})
+        if status == "OK":
+            enriched += 1
+            log_row(row, "incidecoder", "OK",
+                    f"matched '{match['name'][:40]}' ({len(inci)} ingredients)")
+        elif status == "COLUMN_MISSING":
+            log_row(row, "incidecoder", "FAIL", "raw_ingredients column missing")
+            print(_MIGRATION_MESSAGE)
+            return -1
+        else:
+            log_row(row, "incidecoder", "FAIL", err)
+    return enriched
+
+
+def run_tier3(rows, args, base_url, key, inc_tier, stats, workers=3):
     candidates = [r for r in rows
                   if _is_face(r)
                   and not r.get("raw_ingredients")
@@ -595,39 +651,21 @@ def run_tier3(rows, args, base_url, key, inc_tier, stats):
     for r in candidates:
         by_brand[inc_tier.brand_slug_key(r.get("brand"))].append(r)
     print(f"[Enrich] Tier 3 (incidecoder): crawling {len(by_brand)} brand(s) for "
-          f"{len(candidates)} rows")
+          f"{len(candidates)} rows with {workers} worker(s)")
     enriched = 0
-    for brand in by_brand:
-        candidates_list = inc_tier.candidates_for(brand)
-        if not candidates_list:
-            print(f"[Enrich] Tier 3 (incidecoder): no INCIDecoder candidates for {brand}")
-            continue
-        print(f"[Enrich] Tier 3 (incidecoder): {len(candidates_list)} INCIDecoder candidates "
-              f"for {brand}")
-        for row in by_brand[brand]:
-            match = inc_tier.best_match(row.get("product_name"), candidates_list)
-            if not match:
-                stats["incidecoder_no_match"] += 1
-                log_row(row, "incidecoder", "FAIL", "no name match >= 0.75")
-                continue
-            inci = match["ingredients"]
-            row["raw_ingredients"] = inci
-            if args.dry_run:
-                enriched += 1
-                log_row(row, "incidecoder", "OK (dry-run)",
-                        f"matched '{match['name'][:40]}' ({len(inci)} ingredients)")
-                continue
-            status, err = patch_row(base_url, key, row["id"], {"raw_ingredients": inci})
-            if status == "OK":
-                enriched += 1
-                log_row(row, "incidecoder", "OK",
-                        f"matched '{match['name'][:40]}' ({len(inci)} ingredients)")
-            elif status == "COLUMN_MISSING":
-                log_row(row, "incidecoder", "FAIL", "raw_ingredients column missing")
-                print(_MIGRATION_MESSAGE)
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = {
+            pool.submit(_enrich_incidecoder_brand, brand, rows_for_brand, args,
+                        base_url, key, inc_tier, stats): brand
+            for brand, rows_for_brand in by_brand.items()
+        }
+        for fut in as_completed(futures):
+            result = fut.result()
+            if result == -1:
+                for f in futures:
+                    f.cancel()
                 return enriched
-            else:
-                log_row(row, "incidecoder", "FAIL", err)
+            enriched += result
     print(f"[Enrich] Tier 3 (incidecoder) done: {enriched} rows enriched")
     return enriched
 
@@ -649,7 +687,30 @@ def fetch_og_image(url):
         return None
 
 
-def run_tier4(rows, args, base_url, key, stats):
+def _enrich_image_row(row, args, base_url, key, stats):
+    img = fetch_og_image(row["product_url"])
+    if not img:
+        with _STATS_LOCK:
+            stats["images_failed"] += 1
+        log_row(row, "images", "FAIL", "no og:image")
+        return None
+    row["image_url"] = img
+    if args.dry_run:
+        log_row(row, "images", "OK (dry-run)", f"image -> {img[:60]}")
+        return "updated"
+    status, err = patch_row(base_url, key, row["id"], {"image_url": img})
+    if status == "OK":
+        log_row(row, "images", "OK", f"image -> {img[:60]}")
+        return "updated"
+    if status == "COLUMN_MISSING":
+        log_row(row, "images", "FAIL", "image_url column missing")
+        print(_MIGRATION_MESSAGE)
+        return "column_missing"
+    log_row(row, "images", "FAIL", err)
+    return None
+
+
+def run_tier4(rows, args, base_url, key, stats, workers=5):
     candidates = [r for r in rows
                   if _is_face(r) and not r.get("image_url") and r.get("product_url")]
     if args.limit:
@@ -657,32 +718,21 @@ def run_tier4(rows, args, base_url, key, stats):
     if not candidates:
         print("[Enrich] Tier 4 (images): no candidate rows.")
         return 0
-    print(f"[Enrich] Tier 4 (images): scraping og:image for {len(candidates)} rows")
+    print(f"[Enrich] Tier 4 (images): scraping og:image for {len(candidates)} rows "
+          f"with {workers} worker(s)")
     updated = 0
-    for row in candidates:
-        img = fetch_og_image(row["product_url"])
-        if not img:
-            stats["images_failed"] += 1
-            log_row(row, "images", "FAIL", "no og:image")
-            time.sleep(random.uniform(*PAGE_DELAY))
-            continue
-        row["image_url"] = img
-        if args.dry_run:
-            updated += 1
-            log_row(row, "images", "OK (dry-run)", f"image -> {img[:60]}")
-            time.sleep(random.uniform(*PAGE_DELAY))
-            continue
-        status, err = patch_row(base_url, key, row["id"], {"image_url": img})
-        if status == "OK":
-            updated += 1
-            log_row(row, "images", "OK", f"image -> {img[:60]}")
-        elif status == "COLUMN_MISSING":
-            log_row(row, "images", "FAIL", "image_url column missing")
-            print(_MIGRATION_MESSAGE)
-            return updated
-        else:
-            log_row(row, "images", "FAIL", err)
-        time.sleep(random.uniform(*PAGE_DELAY))
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = [pool.submit(_enrich_image_row, row, args, base_url, key, stats)
+                   for row in candidates]
+        for fut in as_completed(futures):
+            result = fut.result()
+            if result == "updated":
+                updated += 1
+            elif result == "column_missing":
+                for f in futures:
+                    f.cancel()
+                return updated
+            time.sleep(random.uniform(0.02, 0.08))
     print(f"[Enrich] Tier 4 (images) done: {updated} rows updated")
     return updated
 
@@ -708,6 +758,8 @@ def parse_args():
                         help="run only one tier: tier0|teeka4|gemini|incidecoder|images")
     parser.add_argument("--dry-run", action="store_true",
                         help="fetch/parse but skip database writes")
+    parser.add_argument("--workers", type=int, default=5,
+                        help="parallel workers per tier (default: 5)")
     return parser.parse_args()
 
 
@@ -774,16 +826,19 @@ def main():
                 classify_batch = get_classify_batch(client)
             stats["tier0"] = run_tier0(rows, args, base_url, service_key, client, classify_batch)
         elif t == "tier1":
-            stats["teeka4"] = run_tier1(rows, args, base_url, service_key)
+            stats["teeka4"] = run_tier1(rows, args, base_url, service_key,
+                                        workers=args.workers)
         elif t == "tier2":
             stats["gemini"] = run_tier2(rows, args, base_url, service_key, client, stats)
         elif t == "tier3":
             if inc_tier is None:
                 print("[Enrich] Tier 3 (incidecoder): skipped - scraper unavailable.")
             else:
-                stats["incidecoder"] = run_tier3(rows, args, base_url, service_key, inc_tier, stats)
+                stats["incidecoder"] = run_tier3(rows, args, base_url, service_key,
+                                                 inc_tier, stats, workers=args.workers)
         elif t == "tier4":
-            stats["images"] = run_tier4(rows, args, base_url, service_key, stats)
+            stats["images"] = run_tier4(rows, args, base_url, service_key, stats,
+                                        workers=args.workers)
 
     face_rows = [r for r in rows if _is_face(r)]
     still_missing = [r for r in face_rows if not r.get("raw_ingredients")]
