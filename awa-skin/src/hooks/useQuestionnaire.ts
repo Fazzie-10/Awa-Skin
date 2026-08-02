@@ -9,7 +9,7 @@ export interface QuestionnaireData {
   sensitivity: boolean | null;
   currentRoutine: string[];
   concerns: string[];
-  location: "Lagos" | "Abuja" | "Other" | null;
+  location: "Lagos" | "Abuja" | "Ibadan" | "Other" | null;
   budgetTier: "budget" | "balanced" | "premium" | null;
 }
 
@@ -39,8 +39,9 @@ export const questions: Question[] = [
     subtitle: "Where are you located to prioritize local vendor stock & fast delivery?",
     type: "select",
     options: [
-      { label: "📍 Lagos (BuyBetter, Teeka4, BeautyByDaz)", value: "Lagos" },
+      { label: "📍 Lagos (BuyBetter, Teeka4, BeautyByDaz, Perona)", value: "Lagos" },
       { label: "📍 Abuja (SkinPopEssentiel)", value: "Abuja" },
+      { label: "📍 Ibadan (Perona Beauty Ibadan)", value: "Ibadan" },
       { label: "🚚 Other Nigeria (Nationwide Shipping)", value: "Other" },
     ],
   },

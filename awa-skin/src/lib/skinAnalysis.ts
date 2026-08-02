@@ -56,7 +56,7 @@ export interface QuestionnaireData {
   sensitivity: boolean | null;
   currentRoutine: string[];
   concerns: string[];
-  location?: "Lagos" | "Abuja" | "Other" | null;
+  location?: "Lagos" | "Abuja" | "Ibadan" | "Other" | null;
   budgetTier?: "budget" | "balanced" | "premium" | null;
 }
 
@@ -73,7 +73,8 @@ export interface ProductMatch {
   nigerian_price_naira?: number;
   nigerian_source_shop?: string;
   nigerian_product_url?: string;
-  location?: "Lagos" | "Abuja" | "Unknown";
+  image_url?: string | null;
+  location?: "Lagos" | "Abuja" | "Ibadan" | "Unknown";
   shipping_required?: boolean;
 }
 
@@ -176,7 +177,37 @@ export async function callPerfectCorp(base64Image: string): Promise<PerfectCorpS
   }
 
   const base64Data = base64Image.includes(",") ? base64Image.split(",")[1] : base64Image;
-  const binary = Buffer.from(base64Data, "base64");
+  let binary = Buffer.from(base64Data, "base64");
+
+  // Enhance before upload: upscale small/low-res frames and lift dark lighting
+  // so YouCam's AI can detect a face (error_lighting_dark was the blocker).
+  try {
+    const sharpMod = await import("sharp").then(m => m.default);
+    const meta = await sharpMod(binary).metadata();
+    const shortSide = Math.min(meta.width || 0, meta.height || 0);
+    let pipeline = sharpMod(binary);
+    if (shortSide > 0 && shortSide < 1080) {
+      pipeline = pipeline.resize({
+        width: meta.width! >= meta.height! ? undefined : 1080,
+        height: meta.width! >= meta.height! ? 1080 : undefined,
+        fit: "inside",
+        withoutEnlargement: false,
+      });
+    }
+    const stats = await sharpMod(binary).stats();
+    const avgLuma = stats.channels?.[0]?.mean ?? 128;
+    if (avgLuma < 90) {
+      const gain = avgLuma < 40 ? 2.2 : avgLuma < 60 ? 1.75 : 1.4;
+      pipeline = pipeline
+        .modulate({ brightness: gain, saturation: 1.08 })
+        .linear(1.2, 6);
+    }
+    pipeline = pipeline.sharpen().jpeg({ quality: 85 });
+    binary = Buffer.from(await pipeline.toBuffer());
+  } catch (enhanceErr) {
+    console.log("[Perfect Corp] Image enhancement skipped:", (enhanceErr as Error).message);
+  }
+
   const controller = new AbortController();
   const totalTimeout = setTimeout(() => controller.abort(), 120000);
 
@@ -489,14 +520,28 @@ function keywordMatchCount(priceName: string, ingredients: string[]): number {
 }
 
 async function fetchNigerianPrices(): Promise<NigerianPrice[]> {
-  const { data, error } = await supabaseServer
-    .from("nigerian_prices")
-    .select("product_name, brand, price_naira, product_url, source_shop, core_step");
-  if (error || !data) {
-    console.log("[ProductMatch] Failed to fetch nigerian_prices:", error?.message);
-    return nigerianPrices;
+  const all: any[] = [];
+  let from = 0;
+  const PAGE = 1000;
+
+  for (;;) {
+    const { data, error } = await supabaseServer
+      .from("nigerian_prices")
+      .select("product_name, brand, price_naira, product_url, source_shop, core_step")
+      .range(from, from + PAGE - 1);
+
+    if (error || !data) {
+      console.log("[ProductMatch] Failed to fetch nigerian_prices:", error?.message);
+      break;
+    }
+
+    all.push(...data);
+    if (data.length < PAGE) break;
+    from += PAGE;
   }
-  return data as NigerianPrice[];
+
+  if (!all.length) return nigerianPrices;
+  return all.filter((item: any) => item.price_naira != null && item.price_naira > 0) as NigerianPrice[];
 }
 
 async function matchProductsByIngredients(
@@ -535,7 +580,7 @@ async function matchProductsByIngredients(
 
   const { data: allProducts, error: prodErr } = await supabaseServer
     .from("products")
-    .select("id, name, brand, category, product_url, source_website, price, raw_ingredients");
+    .select("id, name, brand, category, product_url, source_website, price, raw_ingredients, image_url");
 
   if (prodErr || !allProducts?.length) {
     console.log("[ProductMatch] No products found:", prodErr?.message);
@@ -603,6 +648,7 @@ async function matchProductsByIngredients(
       nigerian_price_naira: ngPrice?.price_naira,
       nigerian_source_shop: ngPrice?.source_shop,
       nigerian_product_url: ngPrice?.product_url,
+      image_url: (product as any).image_url || null,
       matched_ingredients: matched,
       reason: ngPrice
         ? `Available from ${ngPrice.source_shop} — ₦${ngPrice.price_naira.toLocaleString()}`

@@ -1,6 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
+import { Camera, RefreshCw, Sun, ImageOff } from "lucide-react";
 import { useCamera, ANGLE_LABELS } from "@/hooks/useCamera";
 
 export default function CameraCapture() {
@@ -20,17 +21,14 @@ export default function CameraCapture() {
       <div className="min-h-screen flex items-center justify-center p-8">
         <div className="glass-card p-10 max-w-md text-center">
           <div className="w-16 h-16 rounded-full bg-white/5 flex items-center justify-center mx-auto mb-6">
-            <svg className="w-8 h-8 text-white/40" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
-            </svg>
+            <Camera className="w-8 h-8 text-white/40" />
           </div>
           <h2 className="font-serif text-2xl text-white mb-3">Camera Ready</h2>
           <p className="text-white/50 text-sm leading-relaxed mb-8">
-            We'll scan your face from 3 angles for a complete analysis. Tap below when you're ready.
+            We'll scan your face from 3 angles for a complete analysis. Make sure you're in bright light. Tap below when you're ready.
           </p>
-          <button onClick={startCamera} className="btn-primary">
-            Start Camera
+          <button onClick={startCamera} className="btn-primary inline-flex items-center gap-2">
+            <Camera className="w-4 h-4" /> Start Camera
           </button>
         </div>
       </div>
@@ -42,9 +40,7 @@ export default function CameraCapture() {
       <div className="min-h-screen flex items-center justify-center p-8">
         <div className="glass-card p-10 max-w-md text-center">
           <div className="w-16 h-16 rounded-full bg-white/5 flex items-center justify-center mx-auto mb-6">
-            <svg className="w-8 h-8 text-white/40" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15.75 9V5.25A2.25 2.25 0 0013.5 3h-6a2.25 2.25 0 00-2.25 2.25v13.5A2.25 2.25 0 007.5 21h6a2.25 2.25 0 002.25-2.25V15m3 0l3-3m0 0l-3-3m3 3H9" />
-            </svg>
+            <ImageOff className="w-8 h-8 text-white/40" />
           </div>
           <h2 className="font-serif text-2xl text-white mb-3">{state.permissionDenied ? "Camera Access Needed" : "Camera Error"}</h2>
           <p className="text-white/50 text-sm leading-relaxed mb-8">
@@ -52,8 +48,8 @@ export default function CameraCapture() {
               ? "We need camera access to analyze your skin. Please enable it in your browser settings, then refresh."
               : state.error}
           </p>
-          <button onClick={() => window.location.reload()} className="btn-primary">
-            Try Again
+          <button onClick={() => window.location.reload()} className="btn-primary inline-flex items-center gap-2">
+            <RefreshCw className="w-4 h-4" /> Try Again
           </button>
         </div>
       </div>
@@ -81,8 +77,8 @@ export default function CameraCapture() {
           ))}
         </div>
         {state.brightnessWarning && (
-          <p className="text-yellow-400/80 text-sm mt-4 text-center">
-            Low light detected — results may be less accurate
+          <p className="text-yellow-400/80 text-sm mt-4 text-center inline-flex items-center gap-1.5 justify-center w-full">
+            <Sun className="w-4 h-4" /> Low light detected — results may be less accurate
           </p>
         )}
         {state.resolutionWarning && (
@@ -157,8 +153,8 @@ export default function CameraCapture() {
 
         {/* Warnings */}
         {isCaptured && state.brightnessWarning && (
-          <p className="text-yellow-400/70 text-xs text-center mt-3">
-            Image is dark — results may be less accurate
+          <p className="text-yellow-400/70 text-xs text-center mt-3 inline-flex items-center gap-1 justify-center w-full">
+            <Sun className="w-3.5 h-3.5" /> Image is dark — results may be less accurate
           </p>
         )}
         {isCaptured && state.resolutionWarning && (

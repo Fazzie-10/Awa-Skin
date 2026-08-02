@@ -185,6 +185,11 @@ class WooCommerceScraper:
                         title_tag = item.find(["h2", "h3", "h4"])
                     
                     title = title_tag.text.strip() if title_tag else "Unknown Product"
+                    # Clean bulk pricing text (e.g., "Buy 6pcs for NGN4,500 Each...")
+                    import re
+                    title = re.sub(r"Buy\s+\d+pcs\s+for\s+NGN[\d,]+\s+Each", "", title, flags=re.IGNORECASE).strip()
+                    if not title:
+                        title = "Unknown Product"
                     brand = infer_brand(title)
                     
                     if not brand:

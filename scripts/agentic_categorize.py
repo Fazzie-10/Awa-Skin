@@ -154,8 +154,10 @@ def main(input_csv="data/nigerian_prices.csv", output_csv="data/nigerian_prices_
         results_map = classify_batch(product_names)
         
         if results_map is None:
-            print(f"[Agentic] API limit reached for batch {batch_num}. Using keyword-based fallback for remaining products in batch...")
-            from scripts.categorize_products import categorize_product
+            try:
+                from scripts.categorize_products import categorize_product
+            except ImportError:
+                from categorize_products import categorize_product
             results_map = {}
             for name in product_names:
                 step, subcat = categorize_product(name)

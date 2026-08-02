@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { Sparkles, RefreshCw, AlertTriangle, ChevronLeft } from "lucide-react";
 
 interface GeminiAnalysis {
   skinType: string;
@@ -30,7 +31,8 @@ interface ProductMatch {
   nigerian_price_naira?: number;
   nigerian_source_shop?: string;
   nigerian_product_url?: string;
-  location?: "Lagos" | "Abuja" | "Unknown";
+  image_url?: string | null;
+  location?: "Lagos" | "Abuja" | "Ibadan" | "Unknown";
   shipping_required?: boolean;
 }
 
@@ -39,6 +41,13 @@ interface RoutineResult {
   treat: ProductMatch[];
   moisturize: ProductMatch[];
   protect: ProductMatch[];
+  alternatives: {
+    cleanse: ProductMatch[];
+    treat: ProductMatch[];
+    moisturize: ProductMatch[];
+    protect: ProductMatch[];
+  };
+  totalPrice?: number;
   summary: string;
   barrierCompromised: boolean;
   primaryConcerns: string[];
@@ -79,6 +88,8 @@ const EMPTY_ROUTINE: RoutineResult = {
   treat: [],
   moisturize: [],
   protect: [],
+  alternatives: { cleanse: [], treat: [], moisturize: [], protect: [] },
+  totalPrice: 0,
   summary: "",
   barrierCompromised: false,
   primaryConcerns: [],
@@ -170,6 +181,8 @@ function ProductCardInline({ product }: { product: ProductMatch }) {
   const displayShop = product.nigerian_source_shop ?? product.source_website;
   const displayUrl = product.nigerian_product_url ?? product.product_url;
   const locationTag = product.location ? `📍 ${product.location}` : `📍 ${extractPlatformName(displayShop)}`;
+  const imageUrl = product.image_url;
+  const [imgError, setImgError] = useState(false);
 
   return (
     <a
@@ -178,6 +191,30 @@ function ProductCardInline({ product }: { product: ProductMatch }) {
       rel="noopener noreferrer"
       className="block glass-card p-5 hover:border-accent/15 transition-all duration-300 group relative"
     >
+      <div className="flex items-center gap-4 mb-3">
+        <div className="w-20 h-20 rounded-xl overflow-hidden bg-white/5 border border-white/10 flex items-center justify-center shrink-0">
+          {imageUrl && !imgError ? (
+            <img
+              src={imageUrl}
+              alt={product.name}
+              loading="lazy"
+              onError={() => setImgError(true)}
+              className="w-full h-full object-cover"
+            />
+          ) : (
+            <span className="text-2xl">{product.brand?.charAt(0) || "🛍️"}</span>
+          )}
+        </div>
+        <div className="min-w-0 flex-1">
+          <p className="text-xs text-accent/60 font-semibold uppercase tracking-wider mb-0.5 truncate">
+            {product.brand}
+          </p>
+          <p className="text-white font-medium text-lg leading-snug line-clamp-2">
+            {product.name}
+          </p>
+        </div>
+      </div>
+
       {product.shipping_required && (
         <div className="mb-2">
           <span className="px-2.5 py-1 bg-amber-500/10 border border-amber-500/20 rounded-md text-[11px] text-amber-400 font-medium">
@@ -185,12 +222,7 @@ function ProductCardInline({ product }: { product: ProductMatch }) {
           </span>
         </div>
       )}
-      <p className="text-xs text-accent/60 font-medium uppercase tracking-wider mb-1">
-        {product.brand}
-      </p>
-      <p className="text-white font-medium text-lg mb-1">
-        {product.name}
-      </p>
+
       <p className="text-white/50 text-sm mb-3">
         {getPlainReason(product.matched_ingredients, product.step_order)}
       </p>
@@ -392,9 +424,14 @@ function NewResultsView({ result, onRetry }: { result: SkinAnalysisResult; onRet
     return (
       <div className="min-h-screen flex items-center justify-center p-6">
         <div className="glass-card p-10 text-center max-w-md">
+          <div className="w-12 h-12 rounded-full bg-amber-500/10 flex items-center justify-center mx-auto mb-4">
+            <AlertTriangle className="w-6 h-6 text-amber-400" />
+          </div>
           <h2 className="font-serif text-2xl text-white mb-3">Analysis Error</h2>
           <p className="text-white/50 text-sm mb-8">{error}</p>
-          <button onClick={onRetry} className="btn-primary">Try Again</button>
+          <button onClick={onRetry} className="btn-primary inline-flex items-center gap-2">
+            <RefreshCw className="w-4 h-4" /> Try Again
+          </button>
         </div>
       </div>
     );
@@ -409,15 +446,17 @@ function NewResultsView({ result, onRetry }: { result: SkinAnalysisResult; onRet
   const sections = ROUTINE_SECTIONS.map(section => ({
     ...section,
     products: routine?.[section.key] ?? [],
+    alternates: routine?.alternatives?.[section.key] ?? [],
   }));
   const hasProducts = sections.some(s => s.products.length > 0);
+  const budgetLabel = routine?.budgetTier === "budget" ? "₦18,000" : routine?.budgetTier === "balanced" ? "₦18,000 – ₦35,000" : routine?.budgetTier === "premium" ? "₦35,000+" : null;
 
   return (
     <div className="min-h-screen p-6 pb-20">
       <div className="max-w-2xl mx-auto">
         <div className="text-center mb-8">
-          <span className="text-xs tracking-[0.3em] uppercase text-accent-light font-medium">
-            Your Results
+          <span className="inline-flex items-center gap-1.5 text-xs tracking-[0.3em] uppercase text-accent-light font-medium">
+            <Sparkles className="w-3.5 h-3.5" /> Your Results
           </span>
           <h1 className="font-serif text-3xl md:text-4xl text-white mt-3">
             AWA SKIN
@@ -487,8 +526,35 @@ function NewResultsView({ result, onRetry }: { result: SkinAnalysisResult; onRet
                       <ProductCardInline key={product.id} product={product} />
                     ))}
                   </div>
+                  {section.alternates.length > 0 && (
+                    <div className="mt-4">
+                      <p className="text-white/25 text-xs uppercase tracking-wider mb-2">
+                        Other options you could also try
+                      </p>
+                      <div className="space-y-2.5">
+                        {section.alternates.map(product => (
+                          <ProductCardInline key={product.id} product={product} />
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
               ))}
+
+              {routine?.totalPrice != null && routine.totalPrice > 0 && (
+                <div className="glass-card p-5 border border-accent/15">
+                  <div className="flex items-center justify-between">
+                    <p className="text-white/60 text-sm">Estimated total for your 4-step routine</p>
+                    <p className="text-white font-semibold">
+                      ₦{routine.totalPrice.toLocaleString("en-NG")}
+                      {budgetLabel && <span className="text-white/30 text-xs font-normal ml-1">· {budgetLabel}</span>}
+                    </p>
+                  </div>
+                  <p className="text-white/30 text-xs mt-1">
+                    Prices from Nigerian vendors may vary. Check each product for delivery fees.
+                  </p>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -503,9 +569,9 @@ function NewResultsView({ result, onRetry }: { result: SkinAnalysisResult; onRet
               sessionStorage.clear();
               window.location.href = "/";
             }}
-            className="text-sm text-white/30 hover:text-white/60 transition-colors"
+            className="inline-flex items-center gap-1.5 text-sm text-white/30 hover:text-white/60 transition-colors"
           >
-            ← Start over
+            <ChevronLeft className="w-4 h-4" /> Start over
           </button>
         </div>
       </div>
@@ -522,8 +588,8 @@ function LegacyResultsView({ result }: { result: LegacyResult }) {
     <div className="min-h-screen p-6 pb-20">
       <div className="max-w-2xl mx-auto">
         <div className="text-center mb-8">
-          <span className="text-xs tracking-[0.3em] uppercase text-accent-light font-medium">
-            Your Results
+          <span className="inline-flex items-center gap-1.5 text-xs tracking-[0.3em] uppercase text-accent-light font-medium">
+            <Sparkles className="w-3.5 h-3.5" /> Your Results
           </span>
           <h1 className="font-serif text-3xl md:text-4xl text-white mt-3">
             AWA SKIN
@@ -573,9 +639,9 @@ function LegacyResultsView({ result }: { result: LegacyResult }) {
               sessionStorage.clear();
               window.location.href = "/";
             }}
-            className="text-sm text-white/30 hover:text-white/60 transition-colors"
+            className="inline-flex items-center gap-1.5 text-sm text-white/30 hover:text-white/60 transition-colors"
           >
-            ← Start over
+            <ChevronLeft className="w-4 h-4" /> Start over
           </button>
         </div>
       </div>

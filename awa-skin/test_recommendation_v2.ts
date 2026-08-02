@@ -49,6 +49,38 @@ async function runTests() {
     console.error("❌ TEST 1 FAILED: Missing steps in routine.");
   }
 
+  console.log("\n[TEST 2] Location Prioritization (Ibadan / Abeokuta)");
+  const mockContext2: any = {
+    recommendedIngredients: ["Niacinamide", "Centella Asiatica", "Ceramide", "Hyaluronic Acid", "SPF"],
+    ingredientsToAvoid: [],
+    barrierCompromised: false,
+    primaryConcerns: ["acne"],
+    narrativeSummary: "Test Ibadan location summary",
+    questionnaire: {
+      skinTightness: 2,
+      stinging: false,
+      oiliness: "combination",
+      sensitivity: false,
+      currentRoutine: [],
+      concerns: ["acne"],
+      location: "Ibadan",
+      budgetTier: "balanced"
+    }
+  };
+
+  const routine2 = await matchByConcerns(mockContext2);
+  let ibadanCount = 0;
+  for (const p of [...routine2.cleanse, ...routine2.treat, ...routine2.moisturize, ...routine2.protect]) {
+    if (p.location === "Ibadan") ibadanCount++;
+  }
+
+  console.log(`- Ibadan Local Vendor Products: ${ibadanCount}`);
+  console.log(`- Total Routine Products: ${routine2.cleanse.length + routine2.treat.length + routine2.moisturize.length + routine2.protect.length}`);
+
+  if (routine2.cleanse.length > 0 && routine2.treat.length > 0) {
+    console.log("✅ TEST 2 PASSED: Ibadan location routine built successfully!");
+  }
+
   console.log("\n" + "=".repeat(60));
   console.log("ALL AUTOMATED TESTS COMPLETE");
   console.log("=".repeat(60));

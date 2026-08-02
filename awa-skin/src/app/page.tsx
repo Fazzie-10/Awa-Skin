@@ -2,30 +2,13 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { Camera, ClipboardList, Sparkles, Star } from "lucide-react";
 import AwaLogo from "@/components/AwaLogo";
 
 const stepIcons = {
-  camera: (
-    <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
-      <circle cx="12" cy="13" r="4" />
-    </svg>
-  ),
-  clipboard: (
-    <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" />
-      <rect x="8" y="2" width="8" height="4" rx="1" ry="1" />
-      <line x1="9" y1="12" x2="15" y2="12" />
-      <line x1="9" y1="16" x2="13" y2="16" />
-    </svg>
-  ),
-  sparkle: (
-    <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M12 3l1.5 5.5L19 10l-5.5 1.5L12 17l-1.5-5.5L5 10l5.5-1.5z" />
-      <line x1="19" y1="17" x2="19" y2="21" />
-      <line x1="17" y1="19" x2="21" y2="19" />
-    </svg>
-  ),
+  camera: <Camera size={28} />,
+  clipboard: <ClipboardList size={28} />,
+  sparkle: <Sparkles size={28} />,
 };
 
 const brands = ["COSRX", "The Ordinary", "CeraVe", "Beauty of Joseon", "La Roche-Posay"];
@@ -145,9 +128,7 @@ export default function LandingPage() {
               />
               <div className="absolute inset-0 flex items-center justify-center">
                 <div className="w-16 h-16 rounded-full bg-accent/10 backdrop-blur-sm border border-white/5 flex items-center justify-center">
-                  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-accent/60">
-                    <path d="M12 2L15.09 8.26L22 9.27L17 14.14L18.18 21.02L12 17.77L5.82 21.02L7 14.14L2 9.27L8.91 8.26L12 2z" />
-                  </svg>
+                  <Star size={24} className="text-accent/60" />
                 </div>
               </div>
             </div>

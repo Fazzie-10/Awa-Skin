@@ -115,7 +115,10 @@ def compile_prices_data():
     with open(RAW_PRICES_PATH, "r", encoding="utf-8") as f:
         for line in f:
             if line.strip():
-                records.append(json.loads(line))
+                try:
+                    records.append(json.loads(line))
+                except Exception:
+                    continue
                 
     if not records:
         return None
@@ -134,8 +137,8 @@ def compile_prices_data():
     
     df = df.rename(columns=column_mapping)
     
-    # Filter to prioritize only the 4 main target shops
-    target_shops = ["BuyBetter", "Teeka4", "BeautyByDaz", "SkinPopEssentiel"]
+    # Filter to prioritize target shops
+    target_shops = ["BuyBetter", "Teeka4", "BeautyByDaz", "SkinPopEssentiel", "PeronaBeauty_Lagos", "PeronaBeauty_Ibadan"]
     df = df[df["source_shop"].isin(target_shops)].copy()
     
     # Add location based on source shop
@@ -144,6 +147,8 @@ def compile_prices_data():
         "Teeka4": "Lagos",
         "BeautyByDaz": "Lagos",
         "SkinPopEssentiel": "Abuja",
+        "PeronaBeauty_Lagos": "Lagos",
+        "PeronaBeauty_Ibadan": "Ibadan",
     }
     df["location"] = df["source_shop"].map(shop_locations).fillna("Unknown")
     
@@ -177,10 +182,12 @@ def run_prices_pipeline(max_pages, max_products_per_shop, shops_filter=None):
     print("="*50)
     
     all_shops = {
-        "BuyBetter":        {"url": "https://buybetter.ng",         "platform": "woocommerce", "location": "Lagos"},
-        "Teeka4":           {"url": "https://teeka4.com",           "platform": "woocommerce", "location": "Lagos"},
-        "BeautyByDaz":      {"url": "https://beautybydaz.com",      "platform": "woocommerce", "location": "Lagos"},
-        "SkinPopEssentiel": {"url": "https://skinpopessentiel.com", "platform": "shopify",     "location": "Abuja"},
+        "BuyBetter":          {"url": "https://buybetter.ng",           "platform": "woocommerce", "location": "Lagos"},
+        "Teeka4":             {"url": "https://teeka4.com",             "platform": "woocommerce", "location": "Lagos"},
+        "BeautyByDaz":        {"url": "https://beautybydaz.com",        "platform": "woocommerce", "location": "Lagos"},
+        "SkinPopEssentiel":   {"url": "https://skinpopessentiel.com",   "platform": "shopify",     "location": "Abuja"},
+        "PeronaBeauty_Lagos":  {"url": "https://peronabeauty.com",       "platform": "woocommerce", "location": "Lagos"},
+        "PeronaBeauty_Ibadan": {"url": "https://ibadan.peronabeauty.com", "platform": "woocommerce", "location": "Ibadan"},
     }
     
     # Filter to specific shops if requested

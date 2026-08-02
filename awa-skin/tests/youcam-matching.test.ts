@@ -1,4 +1,5 @@
 import { categorizeScores, mergeContext } from '../src/lib/youcam';
+import { budgetError, pickBudgetCombo } from '../src/lib/matching';
 import type { YouCamScores, QuestionnaireData, SeverityMap, AnalysisContext } from '../src/lib/youcam';
 
 let passed = 0;
@@ -369,6 +370,64 @@ const rawIngs2 = ['Water', 'Niacinamide', 'Glycerin'];
 const riNorms2 = rawIngs2.map(normalizeIngredientName);
 const hasAvoid2 = avoidNorms.some(a => riNorms2.includes(a));
 assert(hasAvoid2 === false, 'avoid: product without Salicylic Acid should pass');
+
+// ─────────────────────────────────────────────────────
+// Test group 4: budgetError() + pickBudgetCombo()
+// ─────────────────────────────────────────────────────
+console.log('\n=== matchByConcerns: budget selection ===');
+
+const rangeBudget = { min: 0, max: 18000 };
+const rangeBalanced = { min: 18000, max: 35000 };
+const rangePremium = { min: 35000, max: null };
+
+assertEqual(budgetError(12000, rangeBudget), 0, 'budgetError: 12000 within budget tier -> 0');
+assertEqual(budgetError(20000, rangeBudget), 2000, 'budgetError: 20000 exceeds budget tier -> 2000');
+assertEqual(budgetError(15000, rangeBalanced), 3000, 'budgetError: 15000 under balanced tier -> 3000');
+assertEqual(budgetError(25000, rangeBalanced), 0, 'budgetError: 25000 within balanced tier -> 0');
+assertEqual(budgetError(40000, rangeBalanced), 5000, 'budgetError: 40000 over balanced tier -> 5000');
+assertEqual(budgetError(30000, rangePremium), 5000, 'budgetError: 30000 under premium tier -> 5000');
+assertEqual(budgetError(40000, rangePremium), 0, 'budgetError: 40000 within premium tier -> 0');
+
+const mkProduct = (id: string, step: number, price: number, matches: number): any => ({
+  id, name: id, brand: 'B', price, matched_ingredients: Array.from({ length: matches }, (_, i) => `ing${i}`),
+  reason: '', step_order: step, product_url: '', source_website: '', shipping_required: false,
+});
+
+{
+  const byStep: Record<number, any[]> = {
+    1: [mkProduct('c1', 1, 6000, 2), mkProduct('c2', 1, 2500, 1)],
+    2: [mkProduct('t1', 2, 9000, 3), mkProduct('t2', 2, 5000, 1)],
+    3: [mkProduct('m1', 3, 8000, 2), mkProduct('m2', 3, 3000, 1)],
+    4: [mkProduct('p1', 4, 7000, 2), mkProduct('p2', 4, 4000, 1)],
+  };
+  const { primary, totalPrice } = pickBudgetCombo(byStep, rangeBudget);
+  assertEqual(Object.keys(primary).length, 4, 'pick: one primary per step (4 total)');
+  assert(totalPrice <= 18000, `pick: total within budget tier (got ₦${totalPrice})`);
+  assert(!!(primary[1] && primary[2] && primary[3] && primary[4]), 'pick: all four steps have a primary');
+}
+
+{
+  const byStep: Record<number, any[]> = {
+    1: [mkProduct('c1', 1, 6000, 2), mkProduct('c2', 1, 2500, 1)],
+    2: [mkProduct('t1', 2, 9000, 3), mkProduct('t2', 2, 5000, 1)],
+    3: [mkProduct('m1', 3, 8000, 2), mkProduct('m2', 3, 3000, 1)],
+    4: [mkProduct('p1', 4, 7000, 2), mkProduct('p2', 4, 4000, 1)],
+  };
+  const { totalPrice } = pickBudgetCombo(byStep, rangeBalanced);
+  assert(totalPrice >= 18000 && totalPrice <= 35000, `pick: balanced total within ₦18-35k (got ₦${totalPrice})`);
+}
+
+{
+  const byStep: Record<number, any[]> = {
+    1: [mkProduct('c1', 1, 9000, 2), mkProduct('c2', 1, 2500, 1)],
+    2: [mkProduct('t1', 2, 12000, 3), mkProduct('t2', 2, 5000, 1)],
+    3: [mkProduct('m1', 3, 11000, 2), mkProduct('m2', 3, 3000, 1)],
+    4: [mkProduct('p1', 4, 10000, 2), mkProduct('p2', 4, 4000, 1)],
+  };
+  const { primary, totalPrice } = pickBudgetCombo(byStep, rangePremium);
+  assert(totalPrice >= 35000, `pick: premium total at least ₦35k (got ₦${totalPrice})`);
+  assertEqual(primary[1]?.id, 'c1', 'pick: premium prefers higher-quality combo');
+}
 
 // ─────────────────────────────────────────────────────
 // Summary

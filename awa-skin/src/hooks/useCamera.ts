@@ -34,20 +34,21 @@ function checkBrightness(canvas: HTMLCanvasElement): boolean {
       samples++;
     }
   }
-  return total / samples >= 60;
+  return total / samples >= 70;
 }
 
 function enhanceLowLight(ctx: CanvasRenderingContext2D, width: number, height: number): void {
   const imageData = ctx.getImageData(0, 0, width, height);
   const data = imageData.data;
+  const total = data.length / 4;
 
   let totalBrightness = 0;
   for (let i = 0; i < data.length; i += 4) {
     totalBrightness += 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
   }
-  const avg = totalBrightness / (data.length / 4);
+  const avg = totalBrightness / total;
 
-  if (avg >= 80) return;
+  if (avg >= 100) return;
 
   const hist = new Uint32Array(256);
   for (let i = 0; i < data.length; i += 4) {
@@ -55,7 +56,6 @@ function enhanceLowLight(ctx: CanvasRenderingContext2D, width: number, height: n
     hist[gray]++;
   }
 
-  const total = data.length / 4;
   let cumulative = 0;
   let minVal = 0;
   for (let i = 0; i < 256; i++) {
@@ -71,15 +71,53 @@ function enhanceLowLight(ctx: CanvasRenderingContext2D, width: number, height: n
   }
 
   const range = maxVal - minVal;
-  if (range < 10) return;
+
+  // Exposure/gamma lift: pull dark frames up toward a healthy ~120 avg,
+  // combined with contrast stretch so faces stay visible for the AI.
+  const targetAvg = avg < 40 ? 150 : avg < 60 ? 135 : avg < 100 ? 120 : avg;
+  const gain = targetAvg / Math.max(avg, 1);
+  const gamma = avg < 40 ? 0.75 : avg < 70 ? 0.85 : 0.95;
 
   for (let i = 0; i < data.length; i += 4) {
-    data[i] = Math.min(255, Math.max(0, ((data[i] - minVal) / range) * 255));
-    data[i + 1] = Math.min(255, Math.max(0, ((data[i + 1] - minVal) / range) * 255));
-    data[i + 2] = Math.min(255, Math.max(0, ((data[i + 2] - minVal) / range) * 255));
+    for (let c = 0; c < 3; c++) {
+      const idx = i + c;
+      let v = data[idx];
+      if (range >= 10) {
+        v = ((v - minVal) / range) * 255;
+      }
+      v = Math.pow(Math.max(v, 0) / 255, gamma) * 255;
+      v = v * gain;
+      data[idx] = Math.min(255, Math.max(0, v));
+    }
   }
 
   ctx.putImageData(imageData, 0, 0);
+}
+
+function upscaleCanvas(canvas: HTMLCanvasElement, minShortSide: number): void {
+  const shortSide = Math.min(canvas.width, canvas.height);
+  if (shortSide >= minShortSide) return;
+
+  const scale = minShortSide / shortSide;
+  const targetWidth = Math.round(canvas.width * scale);
+  const targetHeight = Math.round(canvas.height * scale);
+
+  const scaled = document.createElement("canvas");
+  scaled.width = targetWidth;
+  scaled.height = targetHeight;
+  const sctx = scaled.getContext("2d");
+  if (!sctx) return;
+  sctx.imageSmoothingEnabled = true;
+  sctx.imageSmoothingQuality = "high";
+  sctx.drawImage(canvas, 0, 0, targetWidth, targetHeight);
+
+  canvas.width = targetWidth;
+  canvas.height = targetHeight;
+  const dctx = canvas.getContext("2d");
+  if (!dctx) return;
+  dctx.imageSmoothingEnabled = true;
+  dctx.imageSmoothingQuality = "high";
+  dctx.drawImage(scaled, 0, 0);
 }
 
 export function useCamera() {
@@ -146,6 +184,8 @@ export function useCamera() {
     if (!ctx) return;
 
     ctx.drawImage(video, 0, 0);
+    upscaleCanvas(canvas, 1080);
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
     enhanceLowLight(ctx, canvas.width, canvas.height);
     const base64 = canvas.toDataURL("image/jpeg", 0.8);
 

@@ -1,6 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
+import { ArrowRight } from "lucide-react";
 
 export default function ScanConsentPage() {
   const router = useRouter();
@@ -66,8 +67,8 @@ export default function ScanConsentPage() {
 
         {/* Secondary link */}
         <div className="text-center mt-6">
-          <a href="#" className="text-white/20 text-xs hover:text-white/40 transition-colors">
-            Learn more about how we use your data →
+          <a href="#" className="inline-flex items-center gap-1 text-white/20 text-xs hover:text-white/40 transition-colors">
+            Learn more about how we use your data <ArrowRight className="w-3.5 h-3.5" />
           </a>
         </div>
       </div>

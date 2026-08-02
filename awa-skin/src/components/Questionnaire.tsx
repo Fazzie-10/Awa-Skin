@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { ArrowLeft, ArrowRight, Loader2 } from "lucide-react";
 import { useQuestionnaire, questions } from "@/hooks/useQuestionnaire";
 
 export default function Questionnaire() {
@@ -121,30 +122,31 @@ export default function Questionnaire() {
           </div>
         )}
 
-        <div className="flex justify-between mt-6">
+        <div className="flex justify-between items-center mt-6">
           <button
             onClick={prev}
-            className={`text-sm text-white/30 hover:text-white/60 transition-colors ${
+            className={`inline-flex items-center gap-1 text-sm text-white/30 hover:text-white/60 transition-colors ${
               step === 0 ? "invisible" : ""
             }`}
           >
-            ← Back
+            <ArrowLeft className="w-4 h-4" /> Back
           </button>
 
           {step === totalSteps - 1 ? (
             <button
               onClick={handleSubmit}
               disabled={!isComplete || isSubmitting}
-              className="btn-primary text-sm"
+              className="btn-primary text-sm inline-flex items-center gap-2"
             >
+              {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
               {isSubmitting ? "Analyzing..." : "Get Results"}
             </button>
           ) : (
             <button
               onClick={next}
-              className="btn-primary text-sm"
+              className="btn-primary text-sm inline-flex items-center gap-2"
             >
-              Next →
+              Next <ArrowRight className="w-4 h-4" />
             </button>
           )}
         </div>

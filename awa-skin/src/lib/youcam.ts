@@ -42,7 +42,7 @@ export interface QuestionnaireData {
   sensitivity: boolean | null;
   currentRoutine: string[];
   concerns: string[];
-  location?: "Lagos" | "Abuja" | "Other" | null;
+  location?: "Lagos" | "Abuja" | "Ibadan" | "Other" | null;
   budgetTier?: "budget" | "balanced" | "premium" | null;
 }
 

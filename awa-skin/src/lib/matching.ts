@@ -1,4 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import type { AnalysisContext } from "./youcam";
 import type { ProductMatch } from "./skinAnalysis";
 
@@ -9,7 +10,7 @@ interface NigerianPrice {
   product_url: string;
   source_shop: string;
   core_step?: string;
-  location: "Lagos" | "Abuja";
+  location: "Lagos" | "Abuja" | "Ibadan";
 }
 
 export interface StructuredRoutine {
@@ -17,17 +18,108 @@ export interface StructuredRoutine {
   treat: ProductMatch[];
   moisturize: ProductMatch[];
   protect: ProductMatch[];
+  alternatives: {
+    cleanse: ProductMatch[];
+    treat: ProductMatch[];
+    moisturize: ProductMatch[];
+    protect: ProductMatch[];
+  };
+  totalPrice: number;
+  budgetTier?: string;
   summary: string;
   barrierCompromised: boolean;
   primaryConcerns: string[];
   userLocation?: string;
-  budgetTier?: string;
+}
+
+interface BudgetRange {
+  min: number;
+  max: number | null;
+}
+
+function budgetRange(tier: string): BudgetRange {
+  switch (tier) {
+    case "budget": return { min: 0, max: 18000 };
+    case "balanced": return { min: 18000, max: 35000 };
+    case "premium": return { min: 35000, max: null };
+    default: return { min: 0, max: null };
+  }
+}
+
+function qualityScore(p: ProductMatch): number {
+  return p.matched_ingredients.length * 10 - (p.shipping_required ? 3 : 0);
+}
+
+export function budgetError(total: number, range: BudgetRange): number {
+  if (range.max === null) {
+    return Math.max(0, range.min - total); // premium: want >= min, ok to exceed
+  }
+  if (total < range.min) return range.min - total;
+  if (total > range.max) return total - range.max;
+  return 0;
+}
+
+export function pickBudgetCombo(
+  byStep: Record<number, ProductMatch[]>,
+  range: BudgetRange,
+): { primary: Record<number, ProductMatch>; totalPrice: number } {
+  const STEPS = [1, 2, 3, 4];
+  const stepPools = STEPS.map(step => byStep[step].slice(0, 6));
+
+  const fullCartesian = (arrays: ProductMatch[][], prefix: ProductMatch[] = []): ProductMatch[][] => {
+    if (prefix.length === arrays.length) return [prefix.slice()];
+    const out: ProductMatch[][] = [];
+    for (const item of arrays[prefix.length]) {
+      out.push(...fullCartesian(arrays, [...prefix, item]));
+    }
+    return out;
+  };
+
+  const combos = fullCartesian(stepPools);
+  let best: ProductMatch[] = stepPools.map(pool => pool[0]);
+  let bestErr = Infinity;
+  let bestScore = -1;
+
+  for (const combo of combos) {
+    if (combo.some(p => !p)) continue;
+    const total = combo.reduce((s, p) => s + p.price, 0);
+    const err = budgetError(total, range);
+    const quality = combo.reduce((s, p) => s + qualityScore(p), 0);
+    if (err < bestErr || (err === bestErr && quality > bestScore)) {
+      bestErr = err;
+      bestScore = quality;
+      best = combo;
+    }
+  }
+
+  const primary: Record<number, ProductMatch> = {};
+  STEPS.forEach((step, i) => { primary[step] = best[i]; });
+
+  return { primary, totalPrice: best.reduce((s, p) => s + p.price, 0) };
+}
+
+function emptyRoutine(): StructuredRoutine {
+  return {
+    cleanse: [],
+    treat: [],
+    moisturize: [],
+    protect: [],
+    alternatives: { cleanse: [], treat: [], moisturize: [], protect: [] },
+    totalPrice: 0,
+    summary: "",
+    barrierCompromised: false,
+    primaryConcerns: [],
+  };
 }
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || "https://acaxoayevnzuyitprwkk.supabase.co";
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
 
-const supabaseServer = createClient(SUPABASE_URL, SERVICE_KEY);
+let supabaseServer: SupabaseClient | null = null;
+function getSupabase() {
+  if (!supabaseServer) supabaseServer = createClient(SUPABASE_URL, SERVICE_KEY);
+  return supabaseServer;
+}
 
 function normalizeIngredientName(raw: string): string {
   return raw
@@ -75,25 +167,40 @@ function getStepOrder(name: string): number {
   return 2;
 }
 
-function getShopLocation(shop: string): "Lagos" | "Abuja" {
-  if (shop.toLowerCase().includes("skinpop")) return "Abuja";
+function getShopLocation(shop: string): "Lagos" | "Abuja" | "Ibadan" {
+  const s = shop.toLowerCase();
+  if (s.includes("skinpop")) return "Abuja";
+  if (s.includes("ibadan")) return "Ibadan";
   return "Lagos";
 }
 
 async function fetchNigerianPrices(): Promise<NigerianPrice[]> {
-  const { data, error } = await supabaseServer
-    .from("nigerian_prices")
-    .select("product_name, brand, price_naira, product_url, source_shop, core_step");
-  
-  if (error || !data) {
-    console.log("[Matching] Failed to fetch nigerian_prices:", error?.message);
-    return [];
+  const all: any[] = [];
+  let from = 0;
+  const PAGE = 1000;
+
+  for (;;) {
+    const { data, error } = await getSupabase()
+      .from("nigerian_prices")
+      .select("product_name, brand, price_naira, product_url, source_shop, core_step")
+      .range(from, from + PAGE - 1);
+
+    if (error || !data) {
+      console.log("[Matching] Failed to fetch nigerian_prices:", error?.message);
+      break;
+    }
+
+    all.push(...data);
+    if (data.length < PAGE) break;
+    from += PAGE;
   }
-  
-  return data.map(item => ({
-    ...item,
-    location: getShopLocation(item.source_shop || "")
-  })) as NigerianPrice[];
+
+  return all
+    .filter((item: any) => item.price_naira != null && item.price_naira > 0)
+    .map(item => ({
+      ...item,
+      location: getShopLocation(item.source_shop || "")
+    })) as NigerianPrice[];
 }
 
 export async function matchByConcerns(context: AnalysisContext): Promise<StructuredRoutine> {
@@ -102,20 +209,20 @@ export async function matchByConcerns(context: AnalysisContext): Promise<Structu
   const budgetTier = questionnaire?.budgetTier || "all";
 
   if (!recommendedIngredients.length) {
-    return { cleanse: [], treat: [], moisturize: [], protect: [], summary: narrativeSummary, barrierCompromised, primaryConcerns, userLocation, budgetTier };
+    return { ...emptyRoutine(), summary: narrativeSummary, barrierCompromised, primaryConcerns, userLocation, budgetTier };
   }
 
   const normalized = recommendedIngredients.map(normalizeIngredientName).filter(Boolean);
   const uniqueNormalized = [...new Set(normalized)];
   const avoidNorms = ingredientsToAvoid.map(normalizeIngredientName).filter(Boolean);
 
-  const { data: allDbIngredients, error: ingErr } = await supabaseServer
+  const { data: allDbIngredients, error: ingErr } = await getSupabase()
     .from("ingredients")
     .select("id, name");
 
   if (ingErr || !allDbIngredients?.length) {
     console.log("[Matching] No ingredients table:", ingErr?.message);
-    return { cleanse: [], treat: [], moisturize: [], protect: [], summary: narrativeSummary, barrierCompromised, primaryConcerns, userLocation, budgetTier };
+    return { ...emptyRoutine(), summary: narrativeSummary, barrierCompromised, primaryConcerns, userLocation, budgetTier };
   }
 
   const matchedIngNames = new Set<string>();
@@ -129,16 +236,16 @@ export async function matchByConcerns(context: AnalysisContext): Promise<Structu
   }
 
   if (!matchedIngNames.size) {
-    return { cleanse: [], treat: [], moisturize: [], protect: [], summary: narrativeSummary, barrierCompromised, primaryConcerns, userLocation, budgetTier };
+    return { ...emptyRoutine(), summary: narrativeSummary, barrierCompromised, primaryConcerns, userLocation, budgetTier };
   }
 
-  const { data: allProducts, error: prodErr } = await supabaseServer
+  const { data: allProducts, error: prodErr } = await getSupabase()
     .from("products")
-    .select("id, name, brand, category, product_url, source_website, price, raw_ingredients");
+    .select("id, name, brand, category, product_url, source_website, price, raw_ingredients, image_url");
 
   if (prodErr || !allProducts?.length) {
     console.log("[Matching] No products:", prodErr?.message);
-    return { cleanse: [], treat: [], moisturize: [], protect: [], summary: narrativeSummary, barrierCompromised, primaryConcerns, userLocation, budgetTier };
+    return { ...emptyRoutine(), summary: narrativeSummary, barrierCompromised, primaryConcerns, userLocation, budgetTier };
   }
 
   const matchedProducts: Array<{ product: typeof allProducts[0], matched: string[] }> = [];
@@ -161,7 +268,7 @@ export async function matchByConcerns(context: AnalysisContext): Promise<Structu
   }
 
   if (!matchedProducts.length) {
-    return { cleanse: [], treat: [], moisturize: [], protect: [], summary: narrativeSummary, barrierCompromised, primaryConcerns, userLocation, budgetTier };
+    return { ...emptyRoutine(), summary: narrativeSummary, barrierCompromised, primaryConcerns, userLocation, budgetTier };
   }
 
   const prices = await fetchNigerianPrices();
@@ -192,7 +299,7 @@ export async function matchByConcerns(context: AnalysisContext): Promise<Structu
     const isLocal = userLocation === "All" || userLocation === prodLoc;
     const shippingRequired = !isLocal && userLocation !== "All" && userLocation !== "Other";
 
-    let reason = ngPrice
+    let reason = ngPrice && ngPrice.price_naira
       ? `Available from ${ngPrice.source_shop} (${prodLoc}) — ₦${ngPrice.price_naira.toLocaleString()}`
       : `Contains ${matched.slice(0, 3).join(", ")}${matched.length > 3 ? " and more" : ""}`;
 
@@ -207,6 +314,7 @@ export async function matchByConcerns(context: AnalysisContext): Promise<Structu
       price: ngPrice?.price_naira || product.price || 0,
       product_url: ngPrice?.product_url || product.product_url || "",
       source_website: ngPrice?.source_shop || product.source_website || "",
+      image_url: product.image_url || null,
       nigerian_price_naira: ngPrice?.price_naira,
       nigerian_source_shop: ngPrice?.source_shop,
       nigerian_product_url: ngPrice?.product_url,
@@ -249,16 +357,37 @@ export async function matchByConcerns(context: AnalysisContext): Promise<Structu
       return b.matched_ingredients.length - a.matched_ingredients.length;
     });
 
-  const cleanse = deduped.filter(p => p.step_order === 1).slice(0, 4);
-  const treat = deduped.filter(p => p.step_order === 2).slice(0, 6);
-  const moisturize = deduped.filter(p => p.step_order === 3).slice(0, 4);
-  const protect = deduped.filter(p => p.step_order === 4).slice(0, 4);
+  const range = budgetRange(budgetTier || "all");
+  const STEPS = [1, 2, 3, 4];
+
+  const byStep: Record<number, ProductMatch[]> = { 1: [], 2: [], 3: [], 4: [] };
+  for (const p of deduped) {
+    if (p.step_order >= 1 && p.step_order <= 4) byStep[p.step_order].push(p);
+  }
+
+  const { primary, totalPrice } = pickBudgetCombo(byStep, range);
+
+  // Alternates: next-best 2-3 per step, excluding the chosen primary.
+  const alternatives: Record<number, ProductMatch[]> = {};
+  STEPS.forEach(step => {
+    alternatives[step] = byStep[step]
+      .filter(p => p.id !== primary[step]?.id)
+      .sort((a, b) => qualityScore(b) - qualityScore(a))
+      .slice(0, 3);
+  });
 
   return {
-    cleanse,
-    treat,
-    moisturize,
-    protect,
+    cleanse: primary[1] ? [primary[1]] : [],
+    treat: primary[2] ? [primary[2]] : [],
+    moisturize: primary[3] ? [primary[3]] : [],
+    protect: primary[4] ? [primary[4]] : [],
+    alternatives: {
+      cleanse: alternatives[1],
+      treat: alternatives[2],
+      moisturize: alternatives[3],
+      protect: alternatives[4],
+    },
+    totalPrice,
     summary: narrativeSummary,
     barrierCompromised,
     primaryConcerns,
