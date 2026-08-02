@@ -281,7 +281,13 @@ export async function callPerfectCorp(base64Image: string): Promise<PerfectCorpS
         break;
       }
       if (status === "failed" || status === "error") {
-        console.log("[Perfect Corp] Task failed/error");
+        const errData = pollJson?.data ?? pollJson;
+        console.log("[Perfect Corp] Task failed/error:", JSON.stringify({
+          task_status: status,
+          error: errData.error,
+          error_message: errData.error_message,
+          results: errData.results,
+        }));
         return null;
       }
     }

@@ -34,13 +34,48 @@ interface ProductMatch {
   shipping_required?: boolean;
 }
 
+interface RoutineResult {
+  cleanse: ProductMatch[];
+  treat: ProductMatch[];
+  moisturize: ProductMatch[];
+  protect: ProductMatch[];
+  summary: string;
+  barrierCompromised: boolean;
+  primaryConcerns: string[];
+  userLocation?: string;
+  budgetTier?: string;
+}
+
+interface YouCamScores {
+  acne: number;
+  pigmentation: number;
+  pores: number;
+  texture: number;
+  redness: number;
+  oiliness: number;
+  radiance: number;
+  wrinkles: number;
+  darkCircles: number;
+  fitzpatrickEstimate?: string | null;
+}
+
 interface SkinAnalysisResult {
-  perfectCorpScores: null;
+  youcamScores: YouCamScores | null;
   geminiAnalysis: GeminiAnalysis | null;
-  productRecommendations: ProductMatch[];
+  routine: RoutineResult;
   error: string | null;
   usedFallback: boolean;
 }
+
+const EMPTY_ROUTINE: RoutineResult = {
+  cleanse: [],
+  treat: [],
+  moisturize: [],
+  protect: [],
+  summary: "",
+  barrierCompromised: false,
+  primaryConcerns: [],
+};
 
 interface LegacyResult {
   assessment: {
@@ -68,7 +103,7 @@ interface LegacyResult {
 type ResultData = SkinAnalysisResult | LegacyResult;
 
 function isNewResult(data: ResultData): data is SkinAnalysisResult {
-  return "perfectCorpScores" in data || "geminiAnalysis" in data || "productRecommendations" in data;
+  return "routine" in data || "youcamScores" in data;
 }
 
 function capitalize(str: string): string {
@@ -213,9 +248,9 @@ export default function ResultsDashboard() {
           if (data.status === "failed") {
             if (!cancelled) {
               setResult({
-                perfectCorpScores: null,
+                youcamScores: null,
                 geminiAnalysis: null,
-                productRecommendations: [],
+                routine: EMPTY_ROUTINE,
                 error: data.error || "Analysis failed",
                 usedFallback: true,
               });
@@ -261,9 +296,9 @@ export default function ResultsDashboard() {
       router.push(`/results?jobId=${newJobId}`);
     } catch {
       setResult({
-        perfectCorpScores: null,
+        youcamScores: null,
         geminiAnalysis: null,
-        productRecommendations: [],
+        routine: EMPTY_ROUTINE,
         error: "Analysis failed. Please try again.",
         usedFallback: true,
       });
@@ -307,8 +342,19 @@ export default function ResultsDashboard() {
   return <LegacyResultsView result={result} />;
 }
 
+const ROUTINE_SECTIONS: Array<{
+  key: "cleanse" | "treat" | "moisturize" | "protect";
+  title: string;
+  tagline: string;
+}> = [
+  { key: "cleanse", title: "Cleanse", tagline: "Gentle daily cleanser" },
+  { key: "treat", title: "Treat", tagline: "Targets your main concerns" },
+  { key: "moisturize", title: "Moisturize", tagline: "Locks in hydration" },
+  { key: "protect", title: "Protect", tagline: "SPF stops dark spots worsening" },
+];
+
 function NewResultsView({ result, onRetry }: { result: SkinAnalysisResult; onRetry: () => void }) {
-  const { geminiAnalysis, productRecommendations, error } = result;
+  const { geminiAnalysis, routine, error } = result;
 
   if (error && !geminiAnalysis) {
     return (
@@ -322,11 +368,17 @@ function NewResultsView({ result, onRetry }: { result: SkinAnalysisResult; onRet
     );
   }
 
-  const summary = geminiAnalysis ? truncateToFirstSentence(geminiAnalysis.narrativeSummary) : "";
+  const summary = routine?.summary || (geminiAnalysis ? truncateToFirstSentence(geminiAnalysis.narrativeSummary) : "");
   const badge1 = geminiAnalysis ? capitalize(geminiAnalysis.skinType) : "";
   const badge2 = geminiAnalysis?.primaryConcerns?.[0]
     ? capitalize(geminiAnalysis.primaryConcerns[0])
-    : (geminiAnalysis ? capitalize(geminiAnalysis.acneSeverity) : "");
+    : (routine?.primaryConcerns?.[0] ? capitalize(routine.primaryConcerns[0]) : "");
+
+  const sections = ROUTINE_SECTIONS.map(section => ({
+    ...section,
+    products: routine?.[section.key] ?? [],
+  }));
+  const hasProducts = sections.some(s => s.products.length > 0);
 
   return (
     <div className="min-h-screen p-6 pb-20">
@@ -346,6 +398,18 @@ function NewResultsView({ result, onRetry }: { result: SkinAnalysisResult; onRet
           </div>
         )}
 
+        {routine?.barrierCompromised && (
+          <div className="glass-card p-5 mb-6 border border-amber-500/20">
+            <p className="text-amber-400 text-sm font-medium mb-1">
+              Sensitive / compromised barrier detected
+            </p>
+            <p className="text-white/60 text-sm leading-relaxed">
+              We skipped strong exfoliants and actives, and focused on calming,
+              barrier-repairing ingredients like Centella, Ceramides, and Panthenol.
+            </p>
+          </div>
+        )}
+
         <div className="flex justify-center gap-3 mb-10">
           {badge1 && (
             <span className="px-4 py-2 bg-accent/10 border border-accent/20 rounded-full text-sm text-accent-light font-medium">
@@ -360,16 +424,16 @@ function NewResultsView({ result, onRetry }: { result: SkinAnalysisResult; onRet
         </div>
 
         <div className="mb-8">
-          <h2 className="font-serif text-2xl text-white mb-1">Products For You</h2>
-          <p className="text-white/40 text-sm mb-6">Available in Nigeria</p>
+          <h2 className="font-serif text-2xl text-white mb-1">Your Routine</h2>
+          <p className="text-white/40 text-sm mb-6">Products available in Nigeria</p>
 
-          {productRecommendations.length === 0 ? (
+          {!hasProducts ? (
             <div className="glass-card p-8 text-center">
               <p className="text-white/50 text-sm leading-relaxed mb-4">
                 We're still stocking Nigerian products for your skin type. In the meantime, ask your pharmacist for products containing:
               </p>
               <div className="flex flex-wrap justify-center gap-2">
-                {(geminiAnalysis?.recommendedIngredients ?? []).slice(0, 4).map(ing => (
+                {(geminiAnalysis?.recommendedIngredients ?? routine?.primaryConcerns ?? []).slice(0, 4).map(ing => (
                   <span key={ing} className="px-3 py-1.5 bg-accent/10 border border-accent/20 rounded-full text-xs text-accent-light">
                     {ing}
                   </span>
@@ -377,9 +441,21 @@ function NewResultsView({ result, onRetry }: { result: SkinAnalysisResult; onRet
               </div>
             </div>
           ) : (
-            <div className="space-y-4">
-              {productRecommendations.map(product => (
-                <ProductCardInline key={product.id} product={product} />
+            <div className="space-y-8">
+              {sections.filter(s => s.products.length > 0).map(section => (
+                <div key={section.key}>
+                  <div className="flex items-baseline gap-3 mb-4">
+                    <h3 className="font-serif text-xl text-accent-light">
+                      {section.title}
+                    </h3>
+                    <p className="text-white/30 text-xs">{section.tagline}</p>
+                  </div>
+                  <div className="space-y-4">
+                    {section.products.map(product => (
+                      <ProductCardInline key={product.id} product={product} />
+                    ))}
+                  </div>
+                </div>
               ))}
             </div>
           )}
